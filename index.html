@@ -79,14 +79,14 @@ const LANGS = {
     words: WORDS_RAW, big: BIG_TR, up: s => s.toLocaleUpperCase('tr-TR'), vowelP: 0.44,
     vowels: { A: 12, E: 9, 'İ': 8.6, I: 5, U: 3.4, O: 2.8, 'Ü': 2, 'Ö': 0.9 },
     cons: { N: 7.5, R: 6.7, L: 5.9, K: 4.7, D: 4.7, M: 3.7, Y: 3.3, T: 3, S: 3, B: 2.8, 'Ş': 1.8, Z: 1.5, G: 1.3, 'Ç': 1.2, H: 1.1, V: 1, C: 1, P: 0.9, F: 0.5, 'Ğ': 0.5 },
-    hint: 'Yan yana ya da alt alta kelime kur!', line: 'SATIR!', lines: n => n + ' SATIR!', combo: 'KOMBO x', level: 'SEVİYE', hintBtn: 'İPUCU', noHint: 'KELİME YOK', juicy: 'JUICY', hard: 'SERT', noMeaning: 'Anlam bulunamadı', loading: '…',
+    hint: 'Yan yana ya da alt alta kelime kur!', line: 'SATIR!', lines: n => n + ' SATIR!', combo: 'KOMBO x', level: 'SEVİYE', hintBtn: 'İPUCU', noHint: 'KELİME YOK', free: 'SERBEST', moveHint: 'BLOKLARI TAŞI!', juicy: 'JUICY', hard: 'SERT', noMeaning: 'Anlam bulunamadı', loading: '…',
     over: 'Oyun Bitti', again: 'Tekrar Oyna', last: 'Son kelimeler: ', none: 'Hiç kelime bulunamadı, bir dahaki sefere!',
   },
   en: {
     words: WORDS_EN + ' ' + COMMON_EN.split(' ').filter(w => w.length >= 4).join(' '), big: BIG_EN, up: s => s.toUpperCase(), vowelP: 0.4,
     vowels: { E: 12.7, A: 8.2, O: 7.5, I: 7, U: 2.8 },
     cons: { T: 9.1, N: 6.7, S: 6.3, H: 5, R: 6, D: 4.3, L: 4, C: 2.8, M: 2.4, W: 2.2, F: 2.2, G: 2, Y: 2, P: 1.9, B: 1.5, V: 1, K: 0.8, J: 0.15, X: 0.15, Z: 0.1 },
-    hint: 'Make words across or down!', line: 'LINE!', lines: n => n + ' LINES!', combo: 'COMBO x', level: 'LEVEL', hintBtn: 'HINT', noHint: 'NO WORDS', juicy: 'JUICY', hard: 'HARD', noMeaning: 'No definition found', loading: '…',
+    hint: 'Make words across or down!', line: 'LINE!', lines: n => n + ' LINES!', combo: 'COMBO x', level: 'LEVEL', hintBtn: 'HINT', noHint: 'NO WORDS', free: 'FREE', moveHint: 'MOVE BLOCKS!', juicy: 'JUICY', hard: 'HARD', noMeaning: 'No definition found', loading: '…',
     over: 'Game Over', again: 'Play Again', last: 'Last words: ', none: 'No words this time, try again!',
   },
 };
@@ -160,7 +160,11 @@ function evaluate(b, p, gx, gy) {
   const g = b.map(r => r.slice());
   const isNew = new Set();
   for (const c of p.cells) { g[gy + c.y][gx + c.x] = { l: c.l, color: p.color }; isNew.add((gy + c.y) * N + gx + c.x); }
-  const rows = new Set(p.cells.map(c => gy + c.y)), cols = new Set(p.cells.map(c => gx + c.x));
+  return scanWords(g, isNew);
+}
+// g: varsayımsal tahta, isNew: yeni konan/taşınan hücreler. Sadece bunlara değen kelimeler sayılır.
+function scanWords(g, isNew) {
+  const rows = new Set([...isNew].map(k => (k / N) | 0)), cols = new Set([...isNew].map(k => k % N));
   const found = []; // {word, cells:[idx]}
   const scanLine = (idxs) => {
     for (let i = 0; i < N; i++) {
@@ -373,7 +377,11 @@ function place(p, gx, gy) {
   placeFx(p.cells.map(c => [gx + c.x, gy + c.y]));
   sfx.place(p.cells.length);
   p.used = true; moves++; hintShow = null;
-  let gain = p.cells.length;
+  resolve(res, p.cells.length, true);
+}
+
+// Kelimeleri patlat, puanla; placed=false ise serbest moddaki taşıma
+function resolve(res, gain, placed) {
   if (res.clear.size) {
     combo++;
     const mult = Math.min(combo, 4);
@@ -405,7 +413,7 @@ function place(p, gx, gy) {
     if (mult > 1) sfx.combo(mult);
     if (mult > 1) floats.push({ text: L.combo + mult, sub: '', x: 4, y: 1, t: -0.3, color: '#ff8adf' });
     foundWords = foundWords.slice(0, 12);
-  } else {
+  } else if (placed) {
     combo = 0;
   }
   const prevStage = stageOf(score);
@@ -415,8 +423,39 @@ function place(p, gx, gy) {
   if (stageOf(score) > prevStage) floats.push({ text: L.level + ' ' + (stageOf(score) + 1), sub: '', x: 4, y: 3.5, t: -0.5, color: '#7dffb0' });
   if (score > best) { best = score; try { localStorage.setItem('wordblock-best-' + lang, best); } catch (e) {} }
   if (tray.every(t => t.used)) refillTray();
-  if (!anyMove()) setTimeout(gameOver, 700);
+  if (!anyMove()) {
+    // Serbest modda boş hücre varsa bloklar taşınarak yer açılabilir
+    if (freeMode && board.some(r => r.some(c => !c))) floats.push({ text: L.moveHint, sub: '', x: 4, y: 3.5, t: 0, color: '#7fe3ff' });
+    else setTimeout(gameOver, 700);
+  }
 }
+
+// ---------- Serbest mod: tahtadaki harfi taşı / yer değiştir ----------
+let freeMode = false, bdrag = null; // {fx, fy, c, px, py, tx, ty, valid, eval}
+try { freeMode = localStorage.getItem('wordblock-free') === '1'; } catch (e) {}
+function setFree(v) { freeMode = v; bdrag = null; try { localStorage.setItem('wordblock-free', v ? '1' : '0'); } catch (e) {} if (v && !anyMove() && board.some(r => r.some(c => !c))) document.getElementById('over').classList.remove('show'); }
+function moveBoard(fx, fy, tx, ty) {
+  const g = board.map(r => r.slice()), other = g[ty][tx];
+  g[ty][tx] = g[fy][fx]; g[fy][fx] = other;
+  const isNew = new Set([ty * N + tx]); if (other) isNew.add(fy * N + fx);
+  return { g, isNew };
+}
+function updateBoardDrag() {
+  const d = bdrag, tx = Math.floor((d.px - bx) / cell), ty = Math.floor((d.py - BLIFT() - by) / cell);
+  d.tx = tx; d.ty = ty;
+  d.valid = tx >= 0 && ty >= 0 && tx < N && ty < N && !(tx === d.fx && ty === d.fy);
+  d.eval = d.valid ? (() => { const m = moveBoard(d.fx, d.fy, tx, ty); return scanWords(m.g, m.isNew); })() : null;
+}
+function commitBoardDrag() {
+  const d = bdrag; bdrag = null;
+  if (!d.valid || !board[d.fy][d.fx]) { sfx.bad(); return; }
+  const m = moveBoard(d.fx, d.fy, d.tx, d.ty), res = scanWords(m.g, m.isNew);
+  board = m.g; hintShow = null;
+  placeFx([...m.isNew].map(k => [k % N, (k / N) | 0]));
+  sfx.place(1);
+  resolve(res, 0, false);
+}
+const BLIFT = () => cell * 0.9;
 
 // ---------- İpucu ----------
 let hints = 3, hintShow = null; // {i, p, gx, gy, clear, t}
@@ -543,6 +582,8 @@ cv.addEventListener('pointerdown', e => {
     return;
   }
   const mb = modeBtn();
+  const fb = freeBtn();
+  if (x >= fb.x && x <= fb.x + fb.w && y >= fb.y - 6 && y <= fb.y + fb.h + 6) { setFree(!freeMode); sfx.click(); return; }
   const ub = muteBtn();
   if (x >= ub.x - 4 && x <= ub.x + ub.w + 4 && y >= ub.y - 6 && y <= ub.y + ub.h + 6) { setMuted(!muted); sfx.click(); return; }
   if (x >= mb.x && x <= mb.x + mb.w && y >= mb.y - 6 && y <= mb.y + mb.h + 6) {
@@ -552,6 +593,15 @@ cv.addEventListener('pointerdown', e => {
   }
   const hb = hintBtn();
   if (x >= hb.x && x <= hb.x + hb.w && y >= hb.y - 6 && y <= hb.y + hb.h + 6) { useHint(); return; }
+  // Serbest mod: tahtadaki harfi tut
+  if (freeMode && !drag && !bdrag) {
+    const gx = Math.floor((x - bx) / cell), gy = Math.floor((y - by) / cell);
+    if (gx >= 0 && gy >= 0 && gx < N && gy < N && board[gy][gx]) {
+      bdrag = { fx: gx, fy: gy, c: board[gy][gx], px: x, py: y };
+      cv.setPointerCapture(e.pointerId); updateBoardDrag(); sfx.pick(); hintShow = null;
+      return;
+    }
+  }
   traySlots.forEach((s, i) => {
     const p = tray[i];
     if (p.used || drag) return;
@@ -562,9 +612,13 @@ cv.addEventListener('pointerdown', e => {
     }
   });
 });
-cv.addEventListener('pointermove', e => { if (!drag) return; const { x, y } = pos(e); drag.px = x; drag.py = y; updateDrag(); });
+cv.addEventListener('pointermove', e => {
+  const { x, y } = pos(e);
+  if (bdrag) { bdrag.px = x; bdrag.py = y; updateBoardDrag(); return; }
+  if (!drag) return; drag.px = x; drag.py = y; updateDrag();
+});
 cv.addEventListener('pointerup', endDrag);
-cv.addEventListener('pointercancel', () => { drag = null; });
+cv.addEventListener('pointercancel', () => { drag = null; bdrag = null; });
 
 function updateDrag() {
   const p = drag.p;
@@ -576,6 +630,7 @@ function updateDrag() {
   drag.eval = drag.valid ? evaluate(board, p, gx, gy) : null;
 }
 function endDrag() {
+  if (bdrag) { commitBoardDrag(); return; }
   if (!drag) return;
   if (drag.valid) place(drag.p, drag.gx, drag.gy); else sfx.bad();
   drag = null;
@@ -621,9 +676,16 @@ function frame(now) {
     ctx.font = F(800, NARROW() ? 10 : 11); ctx.textAlign = 'center';
     ctx.fillText(t, hx + mb.w / 4, mb.y + mb.h / 2 + 1);
   });
+  // Serbest mod düğmesi
+  {
+    const fb = freeBtn();
+    ctx.fillStyle = freeMode ? '#7fe3ff' : 'rgba(8,10,28,.55)'; rr(fb.x, fb.y, fb.w, fb.h, fb.h / 2); ctx.fill();
+    ctx.fillStyle = freeMode ? '#1b1f3d' : 'rgba(255,255,255,.7)'; ctx.font = F(800, NARROW() ? 9 : 10); ctx.textAlign = 'center';
+    ctx.fillText((freeMode ? '✋ ' : '') + L.free, fb.x + fb.w / 2, fb.y + fb.h / 2 + 1);
+  }
   // Son kelimeler: seviye yazısının sağında kalan alana sığdığı kadar
   {
-    const left = bx + lvlW + 12, room = bx + cell * N - left;
+    const left = bx + lvlW + 12, room = freeBtn().x - 8 - left;
     ctx.textAlign = 'center'; ctx.font = F(700, 12); ctx.fillStyle = 'rgba(255,255,255,.75)';
     let t = L.hint;
     if (foundWords.length) { let n = Math.min(5, foundWords.length); do { t = foundWords.slice(0, n).join(' · '); } while (ctx.measureText(t).width > room && --n > 1); }
@@ -658,10 +720,17 @@ function frame(now) {
     ctx.fillStyle = 'rgba(255,255,255,.05)'; rr(bx + x * cell + 2, by + y * cell + 2, cell - 4, cell - 4, cell * 0.14); ctx.fill();
   }
   if (hintShow) hintShow.t += dt;
-  const hl = new Set(drag && drag.eval ? drag.eval.clear : hintShow ? hintShow.clear : []);
+  const hl = new Set(drag && drag.eval ? drag.eval.clear : bdrag && bdrag.eval ? bdrag.eval.clear : hintShow ? hintShow.clear : []);
   const pulse = 0.75 + 0.25 * Math.sin(now / 120);
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
     const c = board[y][x]; if (!c) continue;
+    if (bdrag && x === bdrag.fx && y === bdrag.fy) {
+      // Tutulan harfin boş kalan yeri; yer değiştirmede karşı harf buraya gelecek
+      const o = bdrag.valid && board[bdrag.ty][bdrag.tx];
+      if (o) drawBlock(bx + x * cell, by + y * cell, cell, o.color, o.l, 0.45, bdrag.eval && bdrag.eval.clear.has(y * N + x));
+      continue;
+    }
+    if (bdrag && bdrag.valid && x === bdrag.tx && y === bdrag.ty) continue;
     if (c.pop < 1) c.pop = Math.min(1, c.pop + dt * 7);
     const s = cell * (0.85 + 0.15 * easeOutBack(c.pop)), sp = springs[y * N + x];
     drawBlockT(bx + (x + 0.5) * cell, by + (y + 0.5 + sp.oy) * cell, s, 1 + sp.sx, 1 + sp.sy, c.color, c.l, hl.has(y * N + x) ? pulse : 1, hl.has(y * N + x));
@@ -670,6 +739,11 @@ function frame(now) {
   if (hintShow && !drag) {
     const a = 0.45 + 0.35 * Math.sin(hintShow.t * 6);
     for (const c of hintShow.p.cells) drawBlock(bx + (hintShow.gx + c.x) * cell, by + (hintShow.gy + c.y) * cell, cell, hintShow.p.color, c.l, a, true);
+  }
+  // Serbest mod: hedef önizleme + tutulan harf
+  if (bdrag) {
+    if (bdrag.valid) drawBlock(bx + bdrag.tx * cell, by + bdrag.ty * cell, cell, bdrag.c.color, bdrag.c.l, 0.55, hl.has(bdrag.ty * N + bdrag.tx));
+    drawBlockT(bdrag.px, bdrag.py - BLIFT() + cell * 0.5 - cell * 0.5, cell * 1.1, 1, 1, bdrag.c.color, bdrag.c.l, 0.95);
   }
   // Gölge önizleme
   if (drag && drag.valid) {
@@ -989,6 +1063,7 @@ const sfx = {
   over() { play('lose'); },
   click() { play('pick', 1.3, 0.6); },
 };
+function freeBtn() { const w = NARROW() ? 66 : 76, h = 22; return { x: bx + cell * N - w, y: ROW3() - h / 2, w, h }; }
 function muteBtn() { const sz = 26; return { x: bx, y: ROW1() - sz / 2, w: sz, h: sz }; }
 
 function easeOutBack(t) { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); }
