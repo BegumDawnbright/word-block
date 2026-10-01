@@ -204,11 +204,11 @@ const STAGES = [
   // randFill: dolgu parçalarının kelime kesiti yerine rastgele harf olma ihtimali
   // helperP: tepsiye yardımcı parça gelme ihtimali
   { min: 0,     len: [3, 3], helpers: 2, helperP: 1,    pairP: 0.5, ext: 0,    maxCells: 3, bigBias: -0.5, randFill: 0.2 },
-  { min: 500,   len: [3, 4], helpers: 1, helperP: 1,    pairP: 0.4, ext: 0.3,  maxCells: 4, bigBias: 0,    randFill: 0.5 },
-  { min: 1500,  len: [3, 5], helpers: 1, helperP: 0.9,  pairP: 0.3, ext: 0.5,  maxCells: 5, bigBias: 0.5,  randFill: 0.75 },
-  { min: 3000,  len: [4, 5], helpers: 1, helperP: 0.75, pairP: 0.2, ext: 0.75, maxCells: 6, bigBias: 1,    randFill: 0.9 },
-  { min: 6000,  len: [4, 6], helpers: 1, helperP: 0.6,  pairP: 0.1, ext: 1,    maxCells: 9, bigBias: 1.5,  randFill: 1 },
-  { min: 10000, len: [4, 6], helpers: 1, helperP: 0.4,  pairP: 0,   ext: 1,    maxCells: 9, bigBias: 2,    randFill: 1 },
+  { min: 500,   len: [3, 4], helpers: 2, helperP: 1,    pairP: 0.4, ext: 0.3,  maxCells: 4, bigBias: 0,    randFill: 0.35 },
+  { min: 1500,  len: [3, 5], helpers: 2, helperP: 1,    pairP: 0.3, ext: 0.5,  maxCells: 5, bigBias: 0.5,  randFill: 0.5 },
+  { min: 3000,  len: [4, 5], helpers: 2, helperP: 0.9,  pairP: 0.25, ext: 0.75, maxCells: 6, bigBias: 1,    randFill: 0.6 },
+  { min: 6000,  len: [4, 6], helpers: 2, helperP: 0.85, pairP: 0.2, ext: 1,    maxCells: 9, bigBias: 1.5,  randFill: 0.7 },
+  { min: 10000, len: [4, 6], helpers: 2, helperP: 0.75, pairP: 0.15, ext: 1,    maxCells: 9, bigBias: 2,    randFill: 0.8 },
 ];
 const stageOf = s => { let i = 0; STAGES.forEach((st, k) => { if (s >= st.min) i = k; }); return i; };
 const rnd = n => (Math.random() * n) | 0;
