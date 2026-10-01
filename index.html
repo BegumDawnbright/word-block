@@ -76,7 +76,7 @@ alarm apple beach bread brick broom brush candy chair chalk cloud clock crown da
 // 2 harfli kelimeler + büyük listede eksik olan yaygın kelimeler
 const LANGS = {
   tr: {
-    words: WORDS_RAW, big: BIG_TR, up: s => s.toLocaleUpperCase('tr-TR'), vowelP: 0.44,
+    words: WORDS_RAW, big: BIG_TR, banned: ['AM'], up: s => s.toLocaleUpperCase('tr-TR'), vowelP: 0.44,
     vowels: { A: 12, E: 9, 'İ': 8.6, I: 5, U: 3.4, O: 2.8, 'Ü': 2, 'Ö': 0.9 },
     cons: { N: 7.5, R: 6.7, L: 5.9, K: 4.7, D: 4.7, M: 3.7, Y: 3.3, T: 3, S: 3, B: 2.8, 'Ş': 1.8, Z: 1.5, G: 1.3, 'Ç': 1.2, H: 1.1, V: 1, C: 1, P: 0.9, F: 0.5, 'Ğ': 0.5 },
     hint: 'Yan yana ya da alt alta kelime kur!', line: 'SATIR!', lines: n => n + ' SATIR!', combo: 'KOMBO x', level: 'SEVİYE', hintBtn: 'İPUCU', noHint: 'KELİME YOK', free: 'SERBEST', moveHint: 'BLOKLARI TAŞI!', juicy: 'JUICY', hard: 'SERT', noMeaning: 'Anlam bulunamadı', loading: '…',
@@ -96,6 +96,8 @@ function setLang(l) {
   // WORD_LIST: parça üretiminde hedeflenen yaygın kelimeler; DICT: kabul edilen tüm kelimeler
   WORD_LIST = [...new Set(L.up(L.words).split(/\s+/).filter(w => w.length >= 3))];
   DICT = new Set(L.up(L.big).split(' ').concat(WORD_LIST));
+  // Sözlükten çıkarılan kelimeler (dil listesinde 'banned')
+  (L.banned || []).forEach(w => DICT.delete(w));
   MAX_WORD = 8;
   VOWELS = L.vowels; CONS = L.cons;
   try { localStorage.setItem('wordblock-lang', l); best = +localStorage.getItem('wordblock-best-' + l) || 0; } catch (e) { best = 0; }
