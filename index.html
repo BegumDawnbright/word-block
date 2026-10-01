@@ -224,7 +224,10 @@ function findCompletions(st) {
     }
   }
   // Tahtayı daha çok kullananlar önce
-  return shuffle(out).sort((p, q) => q.have - p.have);
+  // 2+ harf eksik olanlar öne (sürekli tekli parça gelmesin), sonra tahtayı çok kullananlar
+  const sc = c => c.have + (c.miss.length >= 2 ? 2.5 : 0) + Math.random() * 1.5;
+  out.forEach(c => c.sc = sc(c));
+  return out.sort((p, q) => q.sc - p.sc);
 }
 
 function buildCompletion(c, st, taken) {
@@ -251,7 +254,7 @@ function buildCompletion(c, st, taken) {
 
 // İki parça yan yana gelince kelime: boş tahtada da çalışır
 function buildPair(st) {
-  const list = shuffle(wordsIn(st.len));
+  const list = shuffle(wordsIn([Math.max(4, st.len[0]), Math.max(4, st.len[1])]));
   for (let t = 0; t < 60 && t < list.length; t++) {
     const ch = [...list[t]], n = ch.length, dir = pick(['h', 'v']);
     let free = false;
@@ -260,7 +263,7 @@ function buildPair(st) {
       for (let i = 0; i < n; i++) if (dir === 'h' ? board[a][s + i] : board[s + i][a]) { free = false; break; }
     }
     if (!free) continue;
-    const k = 1 + rnd(n - 1);
+    const k = 2 + rnd(n - 3);
     const p1 = pieceFrom(lineCells(ch.slice(0, k), dir)), p2 = pieceFrom(lineCells(ch.slice(k), dir));
     if (selfWord(p1) || selfWord(p2)) continue;
     p1.target = p2.target = list[t];
@@ -293,10 +296,15 @@ function refillTray() {
   for (const c of comps) {
     if (helpers <= 0 || pieces.length >= 3) break;
     if (pieces.some(p => p.target === c.w)) continue;
+    if (c.miss.length === 1 && pieces.some(p => p.cells.length === 1)) continue;
     const p = buildCompletion(c, st, taken);
     if (p) { pieces.push(p); helpers--; }
   }
-  while (pieces.length < 3) pieces.push(buildFiller(st));
+  while (pieces.length < 3) {
+    let f = buildFiller(st), n = 0;
+    while (f.cells.length === 1 && pieces.some(p => p.cells.length === 1) && n++ < 20) f = buildFiller(st);
+    pieces.push(f);
+  }
   tray = shuffle(pieces);
 }
 
