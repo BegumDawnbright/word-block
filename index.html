@@ -451,22 +451,26 @@ const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 let W, H, DPR, cell, bx, by, trayY, traySlots = [], shownScore = 0;
 let anims = [], particles = [], floats = [];
 
+// Dikey bütçe: üst bilgi + tahta + tepsi + anlam paneli ekrana kaydırmadan sığar
+const PAD_T = 8, HDR = 104, FRAME = 8, GAP = 12, TRAY_K = 2.8, PAD_B = 8;
+let trayH = 0;
 function layout() {
   DPR = Math.min(window.devicePixelRatio || 1, 2.5);
   W = innerWidth; H = innerHeight;
   cv.width = W * DPR; cv.height = H * DPR; cv.style.width = W + 'px'; cv.style.height = H + 'px';
-  const maxBoard = Math.min(W - 32, 460, (H - 290 - MEANING_H));
-  cell = Math.floor(maxBoard / N);
+  const fixedV = PAD_T + HDR + FRAME * 2 + GAP + MEANING_H + PAD_B;
+  cell = Math.max(18, Math.floor(Math.min((W - 24 - FRAME * 2) / N, 460 / N, (H - fixedV) / (N + TRAY_K))));
   const bw = cell * N;
+  trayH = Math.round(cell * TRAY_K);
   bx = Math.round((W - bw) / 2);
-  const total = 120 + bw + 30 + cell * 3.2 + MEANING_H;
-  by = Math.round(Math.max(110, (H - total) / 2 + 110));
-  trayY = by + bw + 28;
-  const slotW = Math.min(bw / 3, 160);
-  traySlots = [0, 1, 2].map(i => ({ x: W / 2 + (i - 1) * slotW, y: trayY + cell * 1.5, w: slotW, h: cell * 3 }));
+  const used = fixedV + bw + trayH, extra = Math.max(0, H - used);
+  by = Math.round(PAD_T + HDR + FRAME + extra * 0.35);
+  trayY = by + bw + FRAME + GAP;
+  const slotW = Math.min((bw + FRAME * 2) / 3, 180);
+  traySlots = [0, 1, 2].map(i => ({ x: W / 2 + (i - 1) * slotW, y: trayY + trayH / 2, w: slotW, h: trayH }));
   const m = document.getElementById('meaning');
-  m.style.left = (bx - 8) + 'px'; m.style.width = (bw + 16) + 'px';
-  m.style.top = Math.round(trayY + cell * 3 + 8) + 'px'; m.style.maxHeight = (MEANING_H - 4) + 'px';
+  m.style.left = (bx - FRAME) + 'px'; m.style.width = (bw + FRAME * 2) + 'px';
+  m.style.top = Math.round(trayY + trayH + 4) + 'px'; m.style.maxHeight = (MEANING_H - 4) + 'px';
 }
 addEventListener('resize', layout);
 
@@ -513,11 +517,13 @@ function burst(gx, gy, color) {
 let drag = null; // {p, i, px, py, gx, gy, valid, eval}
 const LIFT = () => cell * 1.6;
 
-function hintBtn() { const w = 92, h = 28; return { x: bx + cell * N - w, y: by - 60 - h / 2, w, h }; }
-function modeBtn() { const w = 112, h = 26; return { x: bx, y: by - 60 - h / 2, w, h }; }
-function langBtn() { const w = 76, h = 26; return { x: bx + cell * N - w, y: by - 88 - h / 2, w, h }; }
+const ROW1 = () => by - FRAME - 82, ROW2 = () => by - FRAME - 48, ROW3 = () => by - FRAME - 14;
+const NARROW = () => W < 360;
+function hintBtn() { const w = NARROW() ? 62 : 92, h = 28; return { x: bx + cell * N - w, y: ROW2() - h / 2, w, h }; }
+function modeBtn() { const w = NARROW() ? 90 : 104, h = 26; return { x: bx, y: ROW2() - h / 2, w, h }; }
+function langBtn() { const w = 76, h = 26; return { x: bx + cell * N - w, y: ROW1() - h / 2, w, h }; }
 
-function trayScale(p, slot) { return Math.min(0.55, (slot.w * 0.85) / (p.w * cell), (slot.h * 0.85) / (p.h * cell)); }
+function trayScale(p, slot) { return Math.min(0.8, (slot.w * 0.88) / (p.w * cell), (slot.h * 0.9) / (p.h * cell)); }
 
 function pos(e) { return { x: e.clientX, y: e.clientY }; }
 
@@ -573,16 +579,25 @@ function frame(now) {
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   ctx.clearRect(0, 0, W, H);
 
-  // Üst bilgi
+  // Üst bilgi: 3 satır, her öğe kendi alanına sığacak şekilde küçülür
   shownScore += (score - shownScore) * Math.min(1, dt * 10);
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
-  ctx.font = '800 22px -apple-system, "Segoe UI", sans-serif';
-  ctx.fillText('WORD BLOCK', W / 2, by - 88);
-  ctx.font = '800 40px -apple-system, "Segoe UI", sans-serif';
-  ctx.fillText(Math.round(shownScore), W / 2, by - 52);
-  ctx.font = '600 13px -apple-system, "Segoe UI", sans-serif'; ctx.fillStyle = '#ffd93b';
-  ctx.textAlign = 'left'; ctx.fillText('👑 ' + best, bx, by - 88);
-  ctx.fillStyle = '#7dffb0'; ctx.textAlign = 'right'; ctx.fillText(L.level + ' ' + (stageOf(score) + 1), bx + cell * N - 4, by - 30); ctx.textAlign = 'left';
+  const F = (w, px) => `${w} ${px}px -apple-system, "Segoe UI", sans-serif`;
+  const fit = (text, w, max, room) => { ctx.font = F(w, max); const tw = ctx.measureText(text).width; return Math.max(9, Math.floor(max * Math.min(1, room / Math.max(1, tw)))); };
+  const lbx = langBtn(), mbx = modeBtn(), hbx = hintBtn();
+  ctx.textBaseline = 'middle';
+  ctx.font = F(600, 13); ctx.fillStyle = '#ffd93b'; ctx.textAlign = 'left';
+  const crown = '👑 ' + best, crownW = ctx.measureText(crown).width;
+  ctx.fillText(crown, bx, ROW1());
+  const side1 = Math.max(crownW, lbx.w) + 10;
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+  ctx.font = F(800, fit('WORD BLOCK', 800, 22, W - 2 * (bx + side1)));
+  ctx.fillText('WORD BLOCK', W / 2, ROW1());
+  const side2 = Math.max(mbx.w, hbx.w) + 10, sc = String(Math.round(shownScore));
+  ctx.font = F(800, fit(sc, 800, 36, W - 2 * (bx + side2)));
+  ctx.fillText(sc, W / 2, ROW2() + 1);
+  ctx.font = F(700, 12); ctx.fillStyle = '#7dffb0'; ctx.textAlign = 'left';
+  const lvl = L.level + ' ' + (stageOf(score) + 1), lvlW = ctx.measureText(lvl).width;
+  ctx.fillText(lvl, bx, ROW3());
   // Mod seçici
   const mb = modeBtn();
   ctx.fillStyle = 'rgba(8,10,28,.55)'; rr(mb.x, mb.y, mb.w, mb.h, mb.h / 2); ctx.fill();
@@ -590,13 +605,18 @@ function frame(now) {
     const hx = mb.x + i * mb.w / 2;
     if (k === mode) { ctx.fillStyle = col; rr(hx + 2, mb.y + 2, mb.w / 2 - 4, mb.h - 4, (mb.h - 4) / 2); ctx.fill(); }
     ctx.fillStyle = k === mode ? '#1b1f3d' : 'rgba(255,255,255,.7)';
-    ctx.font = '800 11px -apple-system, "Segoe UI", sans-serif'; ctx.textAlign = 'center';
+    ctx.font = F(800, NARROW() ? 10 : 11); ctx.textAlign = 'center';
     ctx.fillText(t, hx + mb.w / 4, mb.y + mb.h / 2 + 1);
   });
-  // Son kelimeler
-  ctx.textAlign = 'center'; ctx.font = '700 13px -apple-system, "Segoe UI", sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,.75)';
-  ctx.fillText(foundWords.length ? foundWords.slice(0, 5).join(' · ') : L.hint, W / 2, by - 14);
+  // Son kelimeler: seviye yazısının sağında kalan alana sığdığı kadar
+  {
+    const left = bx + lvlW + 12, room = bx + cell * N - left;
+    ctx.textAlign = 'center'; ctx.font = F(700, 12); ctx.fillStyle = 'rgba(255,255,255,.75)';
+    let t = L.hint;
+    if (foundWords.length) { let n = Math.min(5, foundWords.length); do { t = foundWords.slice(0, n).join(' · '); } while (ctx.measureText(t).width > room && --n > 1); }
+    if (ctx.measureText(t).width > room) ctx.font = F(700, fit(t, 700, 12, room));
+    ctx.fillText(t, left + room / 2, ROW3());
+  }
   // Dil seçici
   const lb = langBtn();
   ctx.fillStyle = 'rgba(8,10,28,.55)'; rr(lb.x, lb.y, lb.w, lb.h, lb.h / 2); ctx.fill();
@@ -612,7 +632,7 @@ function frame(now) {
   const hb = hintBtn(), off = hints <= 0;
   ctx.fillStyle = off ? 'rgba(255,255,255,.12)' : '#ffd93b'; rr(hb.x, hb.y, hb.w, hb.h, hb.h / 2); ctx.fill();
   ctx.fillStyle = off ? 'rgba(255,255,255,.4)' : '#1b1f3d'; ctx.font = '800 12px -apple-system, "Segoe UI", sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('💡 ' + L.hintBtn + ' ' + hints, hb.x + hb.w / 2, hb.y + hb.h / 2 + 1);
+  ctx.fillText(NARROW() ? '💡 ' + hints : '💡 ' + L.hintBtn + ' ' + hints, hb.x + hb.w / 2, hb.y + hb.h / 2 + 1);
 
   // Tahta (sarsıntı sadece tahta ve efektlere)
   stepSprings(dt);
