@@ -370,6 +370,7 @@ function place(p, gx, gy) {
   const res = evaluate(board, p, gx, gy);
   for (const c of p.cells) board[gy + c.y][gx + c.x] = { l: c.l, color: p.color, pop: mode === 'hard' ? 0 : 1 };
   placeFx(p.cells.map(c => [gx + c.x, gy + c.y]));
+  sfx.place(p.cells.length);
   p.used = true; moves++; hintShow = null;
   let gain = p.cells.length;
   if (res.clear.size) {
@@ -400,6 +401,7 @@ function place(p, gx, gy) {
       const k = res.lines[0][4];
       floats.push({ text: res.lines.length > 1 ? L.lines(res.lines.length) : L.line, sub: '+' + linePts * mult, x: k % N + 0.5, y: ((k / N) | 0) + 0.5, t: -res.words.length * 0.18, color: '#7fe3ff' });
     }
+    if (mult > 1) sfx.combo(mult);
     if (mult > 1) floats.push({ text: L.combo + mult, sub: '', x: 4, y: 1, t: -0.3, color: '#ff8adf' });
     foundWords = foundWords.slice(0, 12);
   } else {
@@ -408,6 +410,7 @@ function place(p, gx, gy) {
   const prevStage = stageOf(score);
   score += gain;
   if (stageOf(score) > prevStage) hints++;
+  if (stageOf(score) > prevStage) setTimeout(sfx.level, 600);
   if (stageOf(score) > prevStage) floats.push({ text: L.level + ' ' + (stageOf(score) + 1), sub: '', x: 4, y: 3.5, t: -0.5, color: '#7dffb0' });
   if (score > best) { best = score; try { localStorage.setItem('wordblock-best-' + lang, best); } catch (e) {} }
   if (tray.every(t => t.used)) refillTray();
@@ -439,6 +442,7 @@ function useHint() {
 }
 
 function gameOver() {
+  sfx.over();
   document.getElementById('finalScore').textContent = score;
   const uniq = [...new Set(foundWords)];
   document.getElementById('finalInfo').textContent = uniq.length ? L.last + uniq.slice(0, 8).join(', ') : L.none;
@@ -528,6 +532,7 @@ function trayScale(p, slot) { return Math.min(0.8, (slot.w * 0.88) / (p.w * cell
 function pos(e) { return { x: e.clientX, y: e.clientY }; }
 
 cv.addEventListener('pointerdown', e => {
+  unlockAudio();
   if (document.getElementById('over').classList.contains('show')) return;
   const { x, y } = pos(e);
   const lb = langBtn();
@@ -537,7 +542,10 @@ cv.addEventListener('pointerdown', e => {
     return;
   }
   const mb = modeBtn();
+  const ub = muteBtn();
+  if (x >= ub.x - 4 && x <= ub.x + ub.w + 4 && y >= ub.y - 6 && y <= ub.y + ub.h + 6) { setMuted(!muted); sfx.click(); return; }
   if (x >= mb.x && x <= mb.x + mb.w && y >= mb.y - 6 && y <= mb.y + mb.h + 6) {
+    sfx.click();
     setMode(x < mb.x + mb.w / 2 ? 'juicy' : 'hard');
     return;
   }
@@ -547,7 +555,7 @@ cv.addEventListener('pointerdown', e => {
     const p = tray[i];
     if (p.used || drag) return;
     if (Math.abs(x - s.x) < s.w / 2 && Math.abs(y - s.y) < s.h / 2 + 10) {
-      drag = { p, i, px: x, py: y };
+      drag = { p, i, px: x, py: y }; sfx.pick();
       cv.setPointerCapture(e.pointerId);
       updateDrag();
     }
@@ -568,7 +576,7 @@ function updateDrag() {
 }
 function endDrag() {
   if (!drag) return;
-  if (drag.valid) place(drag.p, drag.gx, drag.gy);
+  if (drag.valid) place(drag.p, drag.gx, drag.gy); else sfx.bad();
   drag = null;
 }
 
@@ -587,8 +595,12 @@ function frame(now) {
   ctx.textBaseline = 'middle';
   ctx.font = F(600, 13); ctx.fillStyle = '#ffd93b'; ctx.textAlign = 'left';
   const crown = '👑 ' + best, crownW = ctx.measureText(crown).width;
-  ctx.fillText(crown, bx, ROW1());
-  const side1 = Math.max(crownW, lbx.w) + 10;
+  const ubx = muteBtn();
+  ctx.fillStyle = 'rgba(8,10,28,.55)'; ctx.beginPath(); ctx.arc(ubx.x + ubx.w / 2, ROW1(), ubx.w / 2, 0, Math.PI * 2); ctx.fill();
+  ctx.textAlign = 'center'; ctx.font = F(400, 13); ctx.fillStyle = '#fff'; ctx.fillText(muted ? '🔇' : '🔊', ubx.x + ubx.w / 2, ROW1() + 1);
+  ctx.textAlign = 'left'; ctx.font = F(600, 13); ctx.fillStyle = '#ffd93b';
+  ctx.fillText(crown, bx + ubx.w + 8, ROW1());
+  const side1 = Math.max(crownW + ubx.w + 8, lbx.w) + 10;
   ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
   ctx.font = F(800, fit('WORD BLOCK', 800, 22, W - 2 * (bx + side1)));
   ctx.fillText('WORD BLOCK', W / 2, ROW1());
@@ -794,6 +806,7 @@ function drawSmashes(dt) {
     const cs = sm.cells, n = cs.length, last = cs[n - 1];
     const dx = n > 1 ? Math.sign(cs[n - 2].x - last.x) : 0, dy = n > 1 ? Math.sign(cs[n - 2].y - last.y) : 0;
     const t = Math.max(0, sm.t);
+    if (sm.t >= 0 && !sm.started) { sm.started = true; sfx.windup(); }
     // Vurucunun konumu (son harften kaç hücre ilerledi)
     let prog, sx = 1, sy = 1;
     if (t < WIND) { const k = t / WIND; prog = -0.35 * Math.sin(k * Math.PI / 2); const sq = 0.18 * k; sx = 1 - (dx ? sq : -sq); sy = 1 - (dy ? sq : -sq); }
@@ -802,14 +815,14 @@ function drawSmashes(dt) {
     for (let i = n - 2; i >= 0; i--) {
       const c = cs[i];
       if (!c.hit && prog >= n - 1 - i - 0.35) {
-        c.hit = true; shatter(c.x, c.y, c.color);
+        c.hit = true; shatter(c.x, c.y, c.color); sfx.hit(n - 1 - i);
         shake = Math.max(shake, mode === 'hard' ? 6 : 2.5);
         if (mode === 'hard') buzz(15);
         const sp = springs[c.y * N + c.x]; sp.sx = sp.sy = 0;
       }
     }
     const done = t >= WIND + STEP * (n - 1) + 0.05;
-    if (done && !last.hit) { last.hit = true; shatter(last.x + dx * (n - 1), last.y + dy * (n - 1), last.color, 1.4); shake = Math.max(shake, mode === 'hard' ? 9 : 4); if (mode === 'hard') buzz(25); }
+    if (done && !last.hit) { sfx.boom(n); last.hit = true; shatter(last.x + dx * (n - 1), last.y + dy * (n - 1), last.color, 1.4); shake = Math.max(shake, mode === 'hard' ? 9 : 4); if (mode === 'hard') buzz(25); }
     // Henüz vurulmamış harfler: gerilip titreşir
     for (let i = 0; i < n - 1; i++) {
       const c = cs[i]; if (c.hit) continue;
@@ -876,6 +889,62 @@ async function showMeanings(words) {
   if (tok === meaningToken) render(ms);
 }
 function hideMeaning() { meaningToken++; document.getElementById('meaning').classList.remove('show'); }
+
+// ---------- Ses (Web Audio ile üretilir, dosya yok) ----------
+let actx = null, master = null, muted = false;
+try { muted = localStorage.getItem('wordblock-muted') === '1'; } catch (e) {}
+// iOS sesi ancak bir dokunuşun içinde açar
+function unlockAudio() {
+  if (!actx) {
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    actx = new AC(); master = actx.createGain(); master.gain.value = muted ? 0 : 0.55;
+    const comp = actx.createDynamicsCompressor(); master.connect(comp); comp.connect(actx.destination);
+  }
+  if (actx.state === 'suspended') actx.resume();
+}
+function setMuted(m) { muted = m; try { localStorage.setItem('wordblock-muted', m ? '1' : '0'); } catch (e) {} if (master) master.gain.value = m ? 0 : 0.55; }
+// Tek ton: frekans kayması + zarf
+function tone(f0, f1, dur, type = 'sine', vol = 0.3, delay = 0) {
+  if (!actx || muted) return;
+  const t = actx.currentTime + delay, o = actx.createOscillator(), g = actx.createGain();
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.02);
+}
+let noiseBuf = null;
+function noise(dur, freq, q = 1, vol = 0.3, delay = 0, type = 'bandpass') {
+  if (!actx || muted) return;
+  if (!noiseBuf) { noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate); const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+  const t = actx.currentTime + delay, src = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+  src.buffer = noiseBuf; f.type = type; f.frequency.value = freq; f.Q.value = q;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(f); f.connect(g); g.connect(master); src.start(t); src.stop(t + dur + 0.02);
+}
+const PENTA = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
+const note = (base, step) => base * Math.pow(2, PENTA[Math.min(step, PENTA.length - 1)] / 12);
+const sfx = {
+  pick() { mode === 'juicy' ? tone(520, 780, 0.07, 'sine', 0.12) : tone(300, 260, 0.04, 'square', 0.06); },
+  place(n) {
+    if (mode === 'juicy') { tone(240, 120, 0.18, 'sine', 0.35); tone(520, 900, 0.09, 'triangle', 0.12, 0.02); }
+    else { tone(140, 45, 0.16, 'sine', 0.5); noise(0.07, 1800, 0.8, 0.25); tone(90, 60, 0.05, 'square', 0.12); }
+  },
+  bad() { tone(200, 150, 0.12, mode === 'juicy' ? 'triangle' : 'square', 0.08); },
+  windup() { mode === 'juicy' ? tone(300, 700, 0.16, 'sine', 0.12) : noise(0.14, 600, 2, 0.12, 0, 'lowpass'); },
+  hit(i) {
+    const f = note(mode === 'juicy' ? 523 : 330, i);
+    if (mode === 'juicy') { tone(f, f * 1.5, 0.12, 'sine', 0.28); tone(f * 2, f * 2.2, 0.08, 'triangle', 0.08); noise(0.06, 3000, 1.5, 0.08); }
+    else { tone(f * 0.5, f * 0.25, 0.12, 'square', 0.14); noise(0.1, 2500, 0.7, 0.35); tone(110, 40, 0.12, 'sine', 0.4); }
+  },
+  boom(n) {
+    if (mode === 'juicy') { const b = note(523, n); [0, 4, 7].forEach((st, k) => tone(b * Math.pow(2, st / 12), b * Math.pow(2, st / 12) * 1.02, 0.35, 'triangle', 0.13, k * 0.035)); noise(0.25, 5000, 0.6, 0.1, 0, 'highpass'); }
+    else { tone(120, 30, 0.35, 'sine', 0.6); noise(0.3, 900, 0.5, 0.45, 0, 'lowpass'); noise(0.12, 4000, 0.8, 0.2); }
+  },
+  combo(m) { for (let k = 0; k < m; k++) tone(note(660, k * 2), note(660, k * 2) * 1.01, 0.12, 'triangle', 0.12, 0.25 + k * 0.07); },
+  level() { [0, 4, 7, 12].forEach((st, k) => tone(523 * Math.pow(2, st / 12), 523 * Math.pow(2, st / 12), 0.22, 'triangle', 0.15, k * 0.09)); },
+  over() { [7, 4, 0, -5].forEach((st, k) => tone(330 * Math.pow(2, st / 12), 330 * Math.pow(2, st / 12) * 0.98, 0.3, 'triangle', 0.14, k * 0.16)); },
+  click() { tone(800, 600, 0.04, 'sine', 0.1); },
+};
+function muteBtn() { const sz = 26; return { x: bx, y: ROW1() - sz / 2, w: sz, h: sz }; }
 
 function easeOutBack(t) { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); }
 
