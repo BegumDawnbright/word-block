@@ -31,11 +31,22 @@
     background: #ffd93b; border: 0; border-radius: 14px; padding: 14px 40px; cursor: pointer;
     box-shadow: 0 5px 0 #c49d12;
   }
+  #meaning {
+    position: absolute; padding: 10px 14px; border-radius: 14px; background: rgba(8,10,28,.55);
+    font-size: 14px; line-height: 1.35; overflow: hidden; pointer-events: none;
+    opacity: 0; transform: translateY(8px); transition: opacity .25s, transform .25s;
+  }
+  #meaning.show { opacity: 1; transform: none; }
+  #meaning b { color: #ffd93b; font-weight: 800; letter-spacing: .5px; margin-right: 6px; }
+  #meaning span { opacity: .9; }
+  #meaning .row { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  #meaning .row + .row { margin-top: 4px; }
   #over button:active { transform: translateY(3px); box-shadow: 0 2px 0 #c49d12; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="meaning"></div>
 <div id="over">
   <h2>Oyun Bitti</h2>
   <div class="big" id="finalScore">0</div>
@@ -68,14 +79,14 @@ const LANGS = {
     words: WORDS_RAW, big: BIG_TR, up: s => s.toLocaleUpperCase('tr-TR'), vowelP: 0.44,
     vowels: { A: 12, E: 9, 'İ': 8.6, I: 5, U: 3.4, O: 2.8, 'Ü': 2, 'Ö': 0.9 },
     cons: { N: 7.5, R: 6.7, L: 5.9, K: 4.7, D: 4.7, M: 3.7, Y: 3.3, T: 3, S: 3, B: 2.8, 'Ş': 1.8, Z: 1.5, G: 1.3, 'Ç': 1.2, H: 1.1, V: 1, C: 1, P: 0.9, F: 0.5, 'Ğ': 0.5 },
-    hint: 'Yan yana ya da alt alta kelime kur!', line: 'SATIR!', lines: n => n + ' SATIR!', combo: 'KOMBO x', level: 'SEVİYE', hintBtn: 'İPUCU', noHint: 'KELİME YOK',
+    hint: 'Yan yana ya da alt alta kelime kur!', line: 'SATIR!', lines: n => n + ' SATIR!', combo: 'KOMBO x', level: 'SEVİYE', hintBtn: 'İPUCU', noHint: 'KELİME YOK', juicy: 'JUICY', hard: 'SERT', noMeaning: 'Anlam bulunamadı', loading: '…',
     over: 'Oyun Bitti', again: 'Tekrar Oyna', last: 'Son kelimeler: ', none: 'Hiç kelime bulunamadı, bir dahaki sefere!',
   },
   en: {
     words: WORDS_EN + ' ' + COMMON_EN.split(' ').filter(w => w.length >= 4).join(' '), big: BIG_EN, up: s => s.toUpperCase(), vowelP: 0.4,
     vowels: { E: 12.7, A: 8.2, O: 7.5, I: 7, U: 2.8 },
     cons: { T: 9.1, N: 6.7, S: 6.3, H: 5, R: 6, D: 4.3, L: 4, C: 2.8, M: 2.4, W: 2.2, F: 2.2, G: 2, Y: 2, P: 1.9, B: 1.5, V: 1, K: 0.8, J: 0.15, X: 0.15, Z: 0.1 },
-    hint: 'Make words across or down!', line: 'LINE!', lines: n => n + ' LINES!', combo: 'COMBO x', level: 'LEVEL', hintBtn: 'HINT', noHint: 'NO WORDS',
+    hint: 'Make words across or down!', line: 'LINE!', lines: n => n + ' LINES!', combo: 'COMBO x', level: 'LEVEL', hintBtn: 'HINT', noHint: 'NO WORDS', juicy: 'JUICY', hard: 'HARD', noMeaning: 'No definition found', loading: '…',
     over: 'Game Over', again: 'Play Again', last: 'Last words: ', none: 'No words this time, try again!',
   },
 };
@@ -348,7 +359,7 @@ function anyMove() {
 
 function start() {
   board = newBoard(); score = 0; combo = 0; moves = 0; foundWords = []; hints = 3; hintShow = null;
-  shownScore = 0; anims = []; particles = []; floats = [];
+  shownScore = 0; anims = []; particles = []; floats = []; smashes = []; shake = 0; resetSprings(); hideMeaning();
   seedBoard();
   refillTray();
   document.getElementById('over').classList.remove('show');
@@ -357,7 +368,8 @@ function start() {
 // ---------- Yerleştirme ----------
 function place(p, gx, gy) {
   const res = evaluate(board, p, gx, gy);
-  for (const c of p.cells) board[gy + c.y][gx + c.x] = { l: c.l, color: p.color, pop: 0 };
+  for (const c of p.cells) board[gy + c.y][gx + c.x] = { l: c.l, color: p.color, pop: mode === 'hard' ? 0 : 1 };
+  placeFx(p.cells.map(c => [gx + c.x, gy + c.y]));
   p.used = true; moves++; hintShow = null;
   let gain = p.cells.length;
   if (res.clear.size) {
@@ -369,16 +381,20 @@ function place(p, gx, gy) {
     const pts = (wordPts + linePts) * mult;
     gain += pts;
     // efektler
-    for (const k of res.clear) {
-      const x = k % N, y = (k / N) | 0, cell = board[y][x];
-      anims.push({ x, y, l: cell.l, color: cell.color, t: 0 });
-      burst(x, y, cell.color);
-      board[y][x] = null;
-    }
+    // Kelime çarpma: her kelimenin son harfi kelimenin içine doğru çarpar
+    const owned = new Set();
+    res.words.forEach((f, wi) => {
+      const cs = f.cells.filter(k => !owned.has(k));
+      cs.forEach(k => owned.add(k));
+      if (!cs.length) return;
+      smashes.push({ cells: cs.map(k => { const x = k % N, y = (k / N) | 0; return { x, y, l: board[y][x].l, color: board[y][x].color, hit: false }; }), t: -wi * 0.12 });
+    });
+    for (const k of res.clear) board[(k / N) | 0][k % N] = null;
+    showMeanings(res.words.map(f => f.word));
     res.words.forEach((f, i) => {
       foundWords.unshift(f.word);
       const mid = f.cells[(f.cells.length / 2) | 0];
-      floats.push({ text: f.word, sub: '+' + f.word.length * f.word.length * 10 * mult, x: mid % N + 0.5, y: ((mid / N) | 0) + 0.5, t: -i * 0.18, color: '#ffd93b' });
+      floats.push({ text: f.word, sub: '+' + f.word.length * f.word.length * 10 * mult, x: mid % N + 0.5, y: ((mid / N) | 0) + 0.5, t: -0.35 - i * 0.18, color: '#ffd93b' });
     });
     if (res.lines.length) {
       const k = res.lines[0][4];
@@ -439,15 +455,18 @@ function layout() {
   DPR = Math.min(window.devicePixelRatio || 1, 2.5);
   W = innerWidth; H = innerHeight;
   cv.width = W * DPR; cv.height = H * DPR; cv.style.width = W + 'px'; cv.style.height = H + 'px';
-  const maxBoard = Math.min(W - 32, 460, (H - 290));
+  const maxBoard = Math.min(W - 32, 460, (H - 290 - MEANING_H));
   cell = Math.floor(maxBoard / N);
   const bw = cell * N;
   bx = Math.round((W - bw) / 2);
-  const total = 120 + bw + 30 + cell * 3.2;
+  const total = 120 + bw + 30 + cell * 3.2 + MEANING_H;
   by = Math.round(Math.max(110, (H - total) / 2 + 110));
   trayY = by + bw + 28;
   const slotW = Math.min(bw / 3, 160);
   traySlots = [0, 1, 2].map(i => ({ x: W / 2 + (i - 1) * slotW, y: trayY + cell * 1.5, w: slotW, h: cell * 3 }));
+  const m = document.getElementById('meaning');
+  m.style.left = (bx - 8) + 'px'; m.style.width = (bw + 16) + 'px';
+  m.style.top = Math.round(trayY + cell * 3 + 8) + 'px'; m.style.maxHeight = (MEANING_H - 4) + 'px';
 }
 addEventListener('resize', layout);
 
@@ -495,6 +514,7 @@ let drag = null; // {p, i, px, py, gx, gy, valid, eval}
 const LIFT = () => cell * 1.6;
 
 function hintBtn() { const w = 92, h = 28; return { x: bx + cell * N - w, y: by - 60 - h / 2, w, h }; }
+function modeBtn() { const w = 112, h = 26; return { x: bx, y: by - 60 - h / 2, w, h }; }
 function langBtn() { const w = 76, h = 26; return { x: bx + cell * N - w, y: by - 88 - h / 2, w, h }; }
 
 function trayScale(p, slot) { return Math.min(0.55, (slot.w * 0.85) / (p.w * cell), (slot.h * 0.85) / (p.h * cell)); }
@@ -508,6 +528,11 @@ cv.addEventListener('pointerdown', e => {
   if (x >= lb.x && x <= lb.x + lb.w && y >= lb.y - 6 && y <= lb.y + lb.h + 6) {
     const nl = x < lb.x + lb.w / 2 ? 'tr' : 'en';
     if (nl !== lang) { setLang(nl); start(); }
+    return;
+  }
+  const mb = modeBtn();
+  if (x >= mb.x && x <= mb.x + mb.w && y >= mb.y - 6 && y <= mb.y + mb.h + 6) {
+    setMode(x < mb.x + mb.w / 2 ? 'juicy' : 'hard');
     return;
   }
   const hb = hintBtn();
@@ -557,11 +582,21 @@ function frame(now) {
   ctx.fillText(Math.round(shownScore), W / 2, by - 52);
   ctx.font = '600 13px -apple-system, "Segoe UI", sans-serif'; ctx.fillStyle = '#ffd93b';
   ctx.textAlign = 'left'; ctx.fillText('👑 ' + best, bx, by - 88);
-  ctx.fillStyle = '#7dffb0'; ctx.fillText(L.level + ' ' + (stageOf(score) + 1), bx, by - 60);
+  ctx.fillStyle = '#7dffb0'; ctx.textAlign = 'right'; ctx.fillText(L.level + ' ' + (stageOf(score) + 1), bx + cell * N - 4, by - 30); ctx.textAlign = 'left';
+  // Mod seçici
+  const mb = modeBtn();
+  ctx.fillStyle = 'rgba(8,10,28,.55)'; rr(mb.x, mb.y, mb.w, mb.h, mb.h / 2); ctx.fill();
+  [['juicy', L.juicy, '#ff8adf'], ['hard', L.hard, '#7fe3ff']].forEach(([k, t, col], i) => {
+    const hx = mb.x + i * mb.w / 2;
+    if (k === mode) { ctx.fillStyle = col; rr(hx + 2, mb.y + 2, mb.w / 2 - 4, mb.h - 4, (mb.h - 4) / 2); ctx.fill(); }
+    ctx.fillStyle = k === mode ? '#1b1f3d' : 'rgba(255,255,255,.7)';
+    ctx.font = '800 11px -apple-system, "Segoe UI", sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(t, hx + mb.w / 4, mb.y + mb.h / 2 + 1);
+  });
   // Son kelimeler
   ctx.textAlign = 'center'; ctx.font = '700 13px -apple-system, "Segoe UI", sans-serif';
   ctx.fillStyle = 'rgba(255,255,255,.75)';
-  ctx.fillText(foundWords.length ? foundWords.slice(0, 5).join(' · ') : L.hint, W / 2, by - 18);
+  ctx.fillText(foundWords.length ? foundWords.slice(0, 5).join(' · ') : L.hint, W / 2, by - 14);
   // Dil seçici
   const lb = langBtn();
   ctx.fillStyle = 'rgba(8,10,28,.55)'; rr(lb.x, lb.y, lb.w, lb.h, lb.h / 2); ctx.fill();
@@ -579,7 +614,11 @@ function frame(now) {
   ctx.fillStyle = off ? 'rgba(255,255,255,.4)' : '#1b1f3d'; ctx.font = '800 12px -apple-system, "Segoe UI", sans-serif'; ctx.textAlign = 'center';
   ctx.fillText('💡 ' + L.hintBtn + ' ' + hints, hb.x + hb.w / 2, hb.y + hb.h / 2 + 1);
 
-  // Tahta
+  // Tahta (sarsıntı sadece tahta ve efektlere)
+  stepSprings(dt);
+  shake = Math.max(0, shake - dt * (mode === 'hard' ? 40 : 25));
+  ctx.save();
+  if (shake > 0) ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
   const bw = cell * N;
   ctx.fillStyle = 'rgba(8,10,28,.55)'; rr(bx - 8, by - 8, bw + 16, bw + 16, 14); ctx.fill();
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
@@ -591,8 +630,8 @@ function frame(now) {
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
     const c = board[y][x]; if (!c) continue;
     if (c.pop < 1) c.pop = Math.min(1, c.pop + dt * 7);
-    const s = cell * (0.85 + 0.15 * easeOutBack(c.pop));
-    drawBlock(bx + x * cell + (cell - s) / 2, by + y * cell + (cell - s) / 2, s, c.color, c.l, hl.has(y * N + x) ? pulse : 1, hl.has(y * N + x));
+    const s = cell * (0.85 + 0.15 * easeOutBack(c.pop)), sp = springs[y * N + x];
+    drawBlockT(bx + (x + 0.5) * cell, by + (y + 0.5 + sp.oy) * cell, s, 1 + sp.sx, 1 + sp.sy, c.color, c.l, hl.has(y * N + x) ? pulse : 1, hl.has(y * N + x));
   }
   // İpucu: parçanın gideceği yer
   if (hintShow && !drag) {
@@ -606,18 +645,30 @@ function frame(now) {
       drawBlock(bx + (drag.gx + c.x) * cell, by + (drag.gy + c.y) * cell, cell, drag.p.color, c.l, hl.has(k) ? 0.9 : 0.4, hl.has(k));
     }
   }
-  // Patlama animasyonları
-  anims = anims.filter(a => (a.t += dt * 3.2) < 1);
+  // Kelime çarpma + patlama animasyonları
+  drawSmashes(dt);
+  anims = anims.filter(a => (a.t += dt * (a.hard ? 5 : 3.4)) < 1);
   for (const a of anims) {
-    const s = cell * (1 + a.t * 0.4);
-    drawBlock(bx + a.x * cell + (cell - s) / 2, by + a.y * cell + (cell - s) / 2, s, a.color, a.l, 1 - a.t);
+    const cx = bx + (a.x + 0.5) * cell, cy = by + (a.y + 0.5) * cell;
+    if (a.hard) {
+      // Sert: beyaz flaş + hızlı küçülme
+      const s = cell * (1.1 - a.t * 0.6);
+      drawBlockT(cx, cy, s, 1, 1, a.t < 0.25 ? '#ffffff' : a.color, a.l, 1 - a.t);
+    } else {
+      // Juicy: jöle gibi ezilip şişerek patlar
+      const k = a.t, sx = 1 + Math.sin(k * Math.PI) * 0.45, sy = 1 - Math.sin(k * Math.PI * 1.5) * 0.35;
+      drawBlockT(cx, cy, cell * (1 + k * 0.3), sx, sy, a.color, a.l, 1 - k * k);
+    }
   }
-  particles = particles.filter(p => (p.life -= dt * 1.6) > 0);
+  particles = particles.filter(p => (p.life -= dt * p.decay) > 0);
   for (const p of particles) {
-    p.x += p.vx; p.y += p.vy; p.vy += 0.25;
-    ctx.globalAlpha = p.life; ctx.fillStyle = p.color; rr(p.x, p.y, p.s, p.s, p.s * 0.25); ctx.fill();
+    p.x += p.vx * dt * 60; p.y += p.vy * dt * 60; p.vy += p.g * dt * 60; p.rot += p.vr * dt;
+    ctx.globalAlpha = Math.min(1, p.life * 1.5); ctx.fillStyle = p.color;
+    if (p.round) { ctx.beginPath(); ctx.arc(p.x, p.y, p.s * (0.5 + 0.5 * p.life), 0, Math.PI * 2); ctx.fill(); }
+    else { ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillRect(-p.s / 2, -p.s / 2, p.s, p.s); ctx.restore(); }
   }
   ctx.globalAlpha = 1;
+  ctx.restore();
 
   // Tepsi
   traySlots.forEach((s, i) => {
@@ -658,6 +709,154 @@ function frame(now) {
 
   requestAnimationFrame(frame);
 }
+// ---------- His: mod, yaylar, çarpma, anlamlar ----------
+const MEANING_H = 74;
+let mode = 'juicy', smashes = [], shake = 0;
+try { mode = localStorage.getItem('wordblock-mode') === 'hard' ? 'hard' : 'juicy'; } catch (e) {}
+function setMode(m) { mode = m; try { localStorage.setItem('wordblock-mode', m); } catch (e) {} }
+
+// Her hücre için yay: sx/sy = ölçek sapması, oy = dikey kayma (hücre cinsinden)
+const springs = Array.from({ length: N * N }, () => ({ sx: 0, sy: 0, oy: 0, vsx: 0, vsy: 0, voy: 0 }));
+function resetSprings() { springs.forEach(s => { s.sx = s.sy = s.oy = s.vsx = s.vsy = s.voy = 0; }); }
+function stepSprings(dt) {
+  const [k, c] = mode === 'juicy' ? [230, 7] : [650, 26];
+  const [ko, co] = mode === 'juicy' ? [260, 9] : [420, 16];
+  for (const s of springs) {
+    s.vsx += (-k * s.sx - c * s.vsx) * dt; s.sx += s.vsx * dt;
+    s.vsy += (-k * s.sy - c * s.vsy) * dt; s.sy += s.vsy * dt;
+    s.voy += (-ko * s.oy - co * s.voy) * dt; s.oy += s.voy * dt;
+  }
+}
+function placeFx(pts) {
+  const placed = new Set(pts.map(([x, y]) => y * N + x));
+  for (const [x, y] of pts) {
+    const sp = springs[y * N + x];
+    if (mode === 'juicy') { sp.sx = 0.32; sp.sy = -0.3; sp.vsx = 0; sp.vsy = 0; }
+    else { sp.sx = sp.sy = 0.18; sp.oy = -0.12; sp.voy = 0; }
+  }
+  // Komşular: juicy'de titrer, sert'te hafifçe zıplar
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const k = y * N + x;
+    if (placed.has(k) || !board[y][x]) continue;
+    let d = 99;
+    for (const [px, py] of pts) d = Math.min(d, Math.hypot(px - x, py - y));
+    if (d > 2.3) continue;
+    const f = 1 / d, sp = springs[k];
+    if (mode === 'juicy') { sp.vsx += 2.6 * f; sp.vsy -= 2.6 * f; }
+    else { sp.voy -= 4.2 * f; sp.vsy += 1.2 * f; }
+  }
+  if (mode === 'hard') { shake = Math.max(shake, 3); buzz(12); }
+}
+function buzz(ms) { try { navigator.vibrate && navigator.vibrate(ms); } catch (e) {} }
+
+function shatter(x, y, color, power = 1) {
+  const cx = bx + (x + 0.5) * cell, cy = by + (y + 0.5) * cell, u = cell / 40;
+  if (mode === 'juicy') {
+    for (let i = 0; i < 10; i++) {
+      const a = Math.random() * Math.PI * 2, v = (1.5 + Math.random() * 3.5) * u * power;
+      particles.push({ x: cx, y: cy, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 2.2 * u, g: 0.18 * u, s: cell * (0.14 + Math.random() * 0.16), color: Math.random() < 0.3 ? '#fff6a8' : shade(color, 0.15), life: 1, decay: 1.3, round: true, rot: 0, vr: 0 });
+    }
+    anims.push({ x, y, l: '', color, t: 0, hard: false });
+  } else {
+    for (let i = 0; i < 8; i++) {
+      const a = Math.random() * Math.PI * 2, v = (4 + Math.random() * 6) * u * power;
+      particles.push({ x: cx + (Math.random() - 0.5) * cell * 0.5, y: cy + (Math.random() - 0.5) * cell * 0.5, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 1.5 * u, g: 0.35 * u, s: cell * (0.12 + Math.random() * 0.2), color: i % 3 ? color : shade(color, -0.35), life: 1, decay: 2.2, round: false, rot: Math.random() * 6, vr: (Math.random() - 0.5) * 20 });
+    }
+    anims.push({ x, y, l: '', color, t: 0, hard: true });
+  }
+}
+
+// Son harf geri çekilir, kelimenin üstünden ilk harfe kadar çarparak geçer; değdiği harf patlar
+const WIND = 0.16, STEP = 0.065;
+function drawSmashes(dt) {
+  smashes = smashes.filter(sm => {
+    sm.t += dt;
+    const cs = sm.cells, n = cs.length, last = cs[n - 1];
+    const dx = n > 1 ? Math.sign(cs[n - 2].x - last.x) : 0, dy = n > 1 ? Math.sign(cs[n - 2].y - last.y) : 0;
+    const t = Math.max(0, sm.t);
+    // Vurucunun konumu (son harften kaç hücre ilerledi)
+    let prog, sx = 1, sy = 1;
+    if (t < WIND) { const k = t / WIND; prog = -0.35 * Math.sin(k * Math.PI / 2); const sq = 0.18 * k; sx = 1 - (dx ? sq : -sq); sy = 1 - (dy ? sq : -sq); }
+    else { prog = Math.min(n - 1, (t - WIND) / STEP); const st = mode === 'juicy' ? 0.3 : 0.15; sx = 1 + (dx ? st : -st * 0.5); sy = 1 + (dy ? st : -st * 0.5); }
+    // Vurulan harfler patlar
+    for (let i = n - 2; i >= 0; i--) {
+      const c = cs[i];
+      if (!c.hit && prog >= n - 1 - i - 0.35) {
+        c.hit = true; shatter(c.x, c.y, c.color);
+        shake = Math.max(shake, mode === 'hard' ? 6 : 2.5);
+        if (mode === 'hard') buzz(15);
+        const sp = springs[c.y * N + c.x]; sp.sx = sp.sy = 0;
+      }
+    }
+    const done = t >= WIND + STEP * (n - 1) + 0.05;
+    if (done && !last.hit) { last.hit = true; shatter(last.x + dx * (n - 1), last.y + dy * (n - 1), last.color, 1.4); shake = Math.max(shake, mode === 'hard' ? 9 : 4); if (mode === 'hard') buzz(25); }
+    // Henüz vurulmamış harfler: gerilip titreşir
+    for (let i = 0; i < n - 1; i++) {
+      const c = cs[i]; if (c.hit) continue;
+      const wob = sm.t > 0 ? Math.sin(sm.t * 60 + i) * (mode === 'juicy' ? 0.06 : 0.03) : 0;
+      drawBlockT(bx + (c.x + 0.5) * cell, by + (c.y + 0.5) * cell, cell, 1 + wob, 1 - wob, c.color, c.l, 1, sm.t > 0);
+    }
+    if (!last.hit) {
+      const px = last.x + dx * prog, py = last.y + dy * prog;
+      // Hız izi
+      if (t > WIND && mode === 'juicy') for (let g = 1; g <= 3; g++) drawBlockT(bx + (px - dx * g * 0.3 + 0.5) * cell, by + (py - dy * g * 0.3 + 0.5) * cell, cell, sx, sy, last.color, '', 0.25 / g);
+      drawBlockT(bx + (px + 0.5) * cell, by + (py + 0.5) * cell, cell * 1.05, sx, sy, last.color, last.l, 1, true);
+    }
+    return !done;
+  });
+}
+
+function drawBlockT(cx, cy, s, sx, sy, color, letter, alpha = 1, glow = false) {
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(sx, sy);
+  drawBlock(-s / 2, -s / 2, s, color, letter, alpha, glow);
+  ctx.restore();
+}
+
+// Anlamlar: TR → TDK, EN → Wiktionary (çalışma anında, önbellekli)
+const meaningCache = new Map();
+let meaningToken = 0;
+async function fetchMeaning(word, lg) {
+  const key = lg + ':' + word;
+  if (meaningCache.has(key)) return meaningCache.get(key);
+  let out = null;
+  try {
+    if (lg === 'tr') {
+      const r = await fetch('https://sozluk.gov.tr/gts?ara=' + encodeURIComponent(word.toLocaleLowerCase('tr-TR')));
+      const d = await r.json();
+      if (Array.isArray(d) && d[0] && d[0].anlamlarListe) out = d[0].anlamlarListe[0].anlam;
+    } else {
+      const r = await fetch('https://en.wiktionary.org/api/rest_v1/page/definition/' + encodeURIComponent(word.toLowerCase()));
+      if (r.ok) {
+        const d = await r.json(), tmp = document.createElement('div');
+        // Özel isimleri ve "Alternative spelling of…" gibi yönlendirmeleri sona at
+        const bad = t => /^(alternative|obsolete|archaic|plural|misspelling|abbreviation|initialism)\b.*\bof\b/i.test(t);
+        const cands = [];
+        for (const e of d.en || []) for (const df of e.definitions || []) {
+          tmp.innerHTML = df.definition || ''; const t = tmp.textContent.trim().split('\n')[0];
+          if (t) cands.push({ t, sc: (e.partOfSpeech === 'Proper noun' ? 2 : 0) + (bad(t) ? 1 : 0) });
+        }
+        cands.sort((a, b) => a.sc - b.sc);
+        if (cands.length) out = cands[0].t;
+      }
+    }
+  } catch (e) { out = null; }
+  meaningCache.set(key, out);
+  return out;
+}
+function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+async function showMeanings(words) {
+  const tok = ++meaningToken, lg = lang, el = document.getElementById('meaning');
+  const ws = [...new Set(words)].sort((a, b) => b.length - a.length).slice(0, 2);
+  const render = ms => {
+    el.innerHTML = ws.map((w, i) => `<div class="row"><b>${esc(w)}</b><span>${esc(ms[i] === undefined ? L.loading : ms[i] || L.noMeaning)}</span></div>`).join('');
+    el.classList.add('show');
+  };
+  render([]);
+  const ms = await Promise.all(ws.map(w => fetchMeaning(w, lg)));
+  if (tok === meaningToken) render(ms);
+}
+function hideMeaning() { meaningToken++; document.getElementById('meaning').classList.remove('show'); }
+
 function easeOutBack(t) { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); }
 
 let savedLang = 'tr';
